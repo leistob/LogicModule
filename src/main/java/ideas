@@ -1,0 +1,243 @@
+
+
+    /////////////////////////
+    private JPanel createModulePanel(String module) {
+        JPanel panel = new JPanel();
+        panel.setLayout(new BoxLayout(panel, BoxLayout.Y_AXIS));
+
+        JLabel label = new JLabel(module);
+        label.setMinimumSize(new Dimension(100, 50));
+        label.setPreferredSize(new Dimension(100, 50));
+        label.setMaximumSize(new Dimension(100, 50));
+
+        JLabel disconLabel = new JLabel("DISCONNECTED", SwingConstants.CENTER);
+        disconLabel.setOpaque(true);
+        disconLabel.setBackground(new Color(236, 102, 2));
+        disconLabel.setMinimumSize(new Dimension(100, 50));
+        disconLabel.setPreferredSize(new Dimension(100, 50));
+        disconLabel.setMaximumSize(new Dimension(100, 50));
+
+
+        JLabel recLabel = new JLabel("RECEIVING", SwingConstants.CENTER);
+        recLabel.setOpaque(true);
+        recLabel.setBackground(new Color(0, 155, 155));
+        recLabel.setMinimumSize(new Dimension(100, 50));
+        recLabel.setPreferredSize(new Dimension(100, 50));
+        recLabel.setMaximumSize(new Dimension(100, 50));
+
+        JLabel sendLabel = new JLabel("SENDING", SwingConstants.CENTER);
+        sendLabel.setOpaque(true);
+        sendLabel.setBackground(new Color(236, 102, 2));
+        sendLabel.setMinimumSize(new Dimension(100, 50));
+        sendLabel.setPreferredSize(new Dimension(100, 50));
+        sendLabel.setMaximumSize(new Dimension(100, 50));
+
+
+        panel.add(label);
+        panel.add(disconLabel);
+        panel.add(recLabel);
+        panel.add(sendLabel);
+        return panel;
+    }
+
+
+    /*
+        static class PrimeRun implements Runnable {
+            long minPrime;
+            PrimeRun(long minPrime) {
+                this.minPrime = minPrime;
+            }
+
+            public void run() {
+                TestObserver t = new TestObserver();
+                new VoiceHandler(t, gui);
+            }
+        }*/
+
+
+
+        package handler;
+
+        import org.apache.log4j.Logger;
+        import org.json.JSONException;
+        import org.json.JSONObject;
+        import ui.GUI;
+
+        import java.io.*;
+        import java.net.InetSocketAddress;
+        import java.net.ServerSocket;
+        import java.net.Socket;
+        import java.text.DateFormat;
+        import java.text.SimpleDateFormat;
+        import java.util.Date;
+        import java.util.Observer;
+
+        public class VoiceHandler extends Handler {
+
+            private static Logger logger = Logger.getLogger(VoiceHandler.class);
+
+            //Default values for ip address and port
+            private String address = "127.0.0.1";
+            private int port = 5555;
+
+            private ServerSocket serverSocket;
+            private PrintWriter out;
+            private InputStream in;
+
+            private GUI gui;
+
+            public VoiceHandler(Observer o, GUI gui) {
+                this.addObserver(o);
+                this.gui = gui;
+                this.startServer();
+
+            }
+
+            public VoiceHandler() {
+                this.startServer();
+            }
+
+            public VoiceHandler(int port) {
+                this.port = port;
+                this.startServer();
+            }
+
+            public VoiceHandler(String address, int port) {
+                this.address = address;
+                this.port = port;
+                this.startServer();
+            }
+
+            /**
+             * Creates a new ServerSocket object, that waits for a client to connect.
+             * @throws IOException if creation of ServerSocket is not possible
+             */
+            private void startServer() {
+                DateFormat dateFormat = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS (XXX)");
+
+                try {
+                    serverSocket = createNewSocket(address, port);
+                    while (!serverSocket.isClosed() && serverSocket.isBound()) {
+                        Socket s = serverSocket.accept();
+                        logger.info("Receiving data from "
+                                + s.getInetAddress().getHostAddress() + ":" + s.getPort());
+                        out = new PrintWriter(s.getOutputStream(), true);
+                        in = s.getInputStream();
+                        BufferedReader reader = new BufferedReader(new InputStreamReader(in));
+                        gui.changeConnectionState(MODULE_VOICE, STATUS_CONNECTED);
+                        try {
+                            String receivedString;
+
+                            while((receivedString = reader.readLine()) != null) {
+
+                                notifyListeners(receivedString);
+
+                                JSONObject receivedJSON;
+                                String answer;
+                                try {
+                                    receivedJSON = new JSONObject(receivedString);
+                                    answer = receivedJSON.getString("method");
+                                } catch (JSONException e2) {
+                                    answer = "No compatible JSON received";
+                                }
+
+
+                                logger.info("Received string: " + receivedString);
+                                out.write(answer + "\t" + dateFormat.format(new Date()) + "\n");
+                                out.flush();
+                            }
+                        } catch (IOException e) {
+                            logger.debug("Disconnected", e);
+                            logger.info("Reinitializing socket");
+                            gui.changeConnectionState(MODULE_VOICE, STATUS_DISCONNECTED);
+                            try {
+                                serverSocket.close();
+                                serverSocket = createNewSocket(address, port);
+                            } catch(IOException ioe) {
+                                logger.error("Reinitialization failed.");
+                                gui.changeConnectionState(MODULE_VOICE, STATUS_ALREADYINUSE);
+                            }
+                        }
+                    }
+                } catch (IOException ioe) {
+                    logger.error("Critical error.");
+                    gui.changeConnectionState(MODULE_VOICE, STATUS_CRITFAILURE);
+                }
+            }
+
+            /**
+             * If there currently is a ServerSocket up and running, it will be closed.
+             */
+            private void stopServer() throws IOException{
+                try {
+                    out.close();
+                } finally {
+                    try {
+                        in.close();
+                    } finally {
+                        serverSocket.close();
+                    }
+                }
+
+                if(!(serverSocket==null)) {
+                    try {
+                        serverSocket.close();
+                    } catch (IOException ioe) {
+                        logger.error("Could not close ServerSocket.");
+                    }
+                }
+            }
+
+            /**
+             * After a connection loss to the client a new Server socket is created and waits for a new client to connect.
+             * @param address where the server socket is open for conversation
+             * @param port where the server socket is open for conversation
+             * @return created ServerSocket object
+             * @throws IOException if creation of ServerSocket failed.
+             */
+            private ServerSocket createNewSocket(String address, int port) throws IOException {
+                ServerSocket serverSocket = new ServerSocket();
+                if(address != null)
+                    serverSocket.bind(new InetSocketAddress(address, port));
+                else
+                    serverSocket.bind(new InetSocketAddress(port));
+                if(serverSocket.isBound()){
+                    logger.info("Server socket started on "
+                            + serverSocket.getInetAddress() + ":"
+                            + serverSocket.getLocalPort());
+                    return serverSocket;
+                }
+                else {
+                    logger.debug("Binding server socket on "
+                            + serverSocket.getInetAddress()
+                            + ":" + serverSocket.getLocalPort()
+                            + " failed");
+                    return null;
+                }
+            }
+
+            /**
+             * Sends a message in form of an object (could be anything else than a String) to all registered observers.
+             * SetChanged() announces the change, while notifyObservers() transmits the actual change.
+             * @param message The data that will be sent to all Observers.
+             */
+            private void notifyListeners(String message) {
+                setChanged();
+                notifyObservers(message);
+            }
+        }
+
+        //Get hands
+        for(Hand hand : frame.hands()) {
+
+
+            // Get the hand's normal vector and direction
+            Vector normal = hand.palmNormal();
+            Vector direction = hand.direction();
+
+            /*
+            // Calculate the hand's pitch, roll, and yaw angles
+            System.out.println("  pitch: " + Math.toDegrees(direction.pitch()) + " degrees, "
+                    + "roll: " + Math.toDegrees(normal.roll()) + " degrees, "
+                    + "yaw: " + Math.toDegrees(direction.yaw()) + " degrees");*/
+        }
